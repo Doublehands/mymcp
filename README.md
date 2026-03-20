@@ -75,6 +75,53 @@ MOCK_MCP=true   # 模拟阶段可设为 true，正式用 Cognito 时删除或设
 1. `MCP_RESOURCE` 改成云上 https 地址
 2. 生产环境改 `cors({ origin: 'https://你的平台域名' })`
 
+## MCP 配置（平台侧）
+
+在你的平台里配置 MCP 时，填入以下信息：
+
+| 配置项 | 值 |
+|--------|-----|
+| **MCP URL** | `https://mymcp-one.vercel.app/mcp` |
+| **Metadata** | `https://mymcp-one.vercel.app/.well-known/oauth-protected-resource` |
+
+> ⚠️ 必须填 **`/mcp`** 路径！标准 MCP 客户端（Cursor、Claude 等）连接的是 Streamable HTTP 端点。
+
+### 请求方式
+
+1. **列出工具**：`GET https://mymcp-one.vercel.app/mcp/tools`  
+   - Header：`Authorization: Bearer <Cognito access token>`  
+   - MOCK 模式下可不带 token
+
+2. **调用工具**：`POST https://mymcp-one.vercel.app/mcp/tools/call`  
+   - Header：`Authorization: Bearer <token>`、`Content-Type: application/json`  
+   - Body：`{ "name": "工具名", "arguments": { ... } }`
+
+### 平台配置示例（伪代码）
+
+```javascript
+// 平台配置
+const mcpConfig = {
+  baseUrl: 'https://mymcp-one.vercel.app',
+  getTools: () => fetch(`${baseUrl}/mcp/tools`, {
+    headers: { Authorization: `Bearer ${userAccessToken}` }
+  }),
+  callTool: (name, args) => fetch(`${baseUrl}/mcp/tools/call`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${userAccessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name, arguments: args })
+  })
+};
+```
+
+### 当前 MOCK 模式
+
+Vercel 上若已设置 `MOCK_MCP=true`，请求可不带 token，直接可调通。
+
+---
+
 ## 端点说明
 
 | 路径 | 说明 |

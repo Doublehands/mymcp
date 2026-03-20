@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import dotenv from 'dotenv';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
 dotenv.config();
 
 const app = express();
@@ -16,14 +19,30 @@ app.use((req, _res, next) => {
   next();
 });
 
-// ========== 请求日志中间件（记录所有请求的 method、path、headers、body） ==========
+// ========== 请求日志中间件（记录 headers key/value、query key/value） ==========
 app.use((req, _res, next) => {
+  const authHeader = req.headers.authorization;
+  const tokenPassed = authHeader?.startsWith('Bearer ')
+    ? `已传递 (${authHeader.slice(7, 20)}...)`
+    : '未传递';
+
+  const headerEntries = Object.entries(req.headers).map(([key, value]) => ({
+    key,
+    value: value ?? '',
+  }));
+  const queryEntries = Object.entries(req.query).map(([key, value]) => ({
+    key,
+    value: Array.isArray(value) ? value.join(',') : String(value ?? ''),
+  }));
+
   const log: Record<string, unknown> = {
     timestamp: new Date().toISOString(),
     method: req.method,
     path: req.path,
     url: req.originalUrl,
-    headers: { ...req.headers },
+    token: tokenPassed,
+    headers: headerEntries,
+    query: queryEntries,
   };
   if (req.body && Object.keys(req.body).length > 0) {
     log.body = req.body;
@@ -141,7 +160,42 @@ app.post('/mcp/tools/call', authenticateMCP, (req, res) => {
   res.json({ result: '工具执行成功', data: {} });
 });
 
-// 你也可以用官方 @modelcontextprotocol/sdk 做完整的 JSON-RPC + SSE（如果以后要接 Claude 等官方客户端），我可以再给你那版代码。
+// ====================== 标准 MCP 协议端点（Streamable HTTP，供 Cursor/Claude 等客户端连接） ======================
+const createMcpHandler = () => {
+  const server = new McpServer(
+    { name: 'mymcp', version: '1.0.0' },
+    { capabilities: { tools: {} } }
+  );
+  server.registerTool(
+    'yourTool1',
+    { description: '示例工具', inputSchema: z.object({}) },
+    async () => ({
+      content: [{ type: 'text', text: '工具执行成功' }],
+    })
+  );
+  return server;
+};
+
+app.all('/mcp', authenticateMCP, async (req, res) => {
+  const server = createMcpHandler();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined, // 无状态模式，适配 Vercel serverless
+  });
+  await server.connect(transport);
+  try {
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error('[MCP]', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  } finally {
+    res.once('close', () => {
+      transport.close();
+      server.close();
+    });
+  }
+});
 
 // 导出 app 供 Vercel serverless 使用
 export default app;
