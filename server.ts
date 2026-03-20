@@ -112,6 +112,19 @@ const authenticateMCP = async (
   }
 };
 
+// 【调试】健康检查 - 无需认证，用于验证服务是否可达
+app.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    message: 'MCP 服务运行中',
+    mcp: `${MCP_RESOURCE}/mcp`,
+    timestamp: new Date().toISOString(),
+  });
+});
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 // 【必须】Protected Resource Metadata（MCP 规范强制要求）
 app.get('/.well-known/oauth-protected-resource', (_req, res) => {
   res.json({
