@@ -143,54 +143,235 @@ app.get('/.well-known/openid-configuration', (_req, res) => {
 // ====================== 你的 MCP 工具接口（在这里"添加它"） ======================
 // 下面是示例，你可以改成任何路径，只要加 authenticateMCP 就行
 
-// 示例1：列出工具（你的平台可以 GET 这个）
-app.get('/mcp/tools', authenticateMCP, (req, res) => {
-  const user = req.user;
-  res.json({
-    tools: [
-      {
-        name: 'yourTool1',
-        description: 'xxx',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
+// 测试工具定义（REST 与 MCP 共用）
+const MOCK_TOOLS = [
+  {
+    name: 'get_weather',
+    description: '获取指定城市的模拟天气信息',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        city: { type: 'string', description: '城市名称' },
       },
-      // ... 你所有的工具
-    ],
-  });
+      required: ['city'],
+    },
+  },
+  {
+    name: 'get_time',
+    description: '获取当前服务器时间',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'calculate',
+    description: '简单计算器：支持加减乘除',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        a: { type: 'number', description: '第一个数' },
+        b: { type: 'number', description: '第二个数' },
+        op: { type: 'string', enum: ['add', 'subtract', 'multiply', 'divide'], description: '运算类型' },
+      },
+      required: ['a', 'b', 'op'],
+    },
+  },
+  {
+    name: 'echo',
+    description: '回显输入的文本',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '要回显的文本' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'random_number',
+    description: '生成指定范围内的随机整数',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        min: { type: 'number', description: '最小值', default: 0 },
+        max: { type: 'number', description: '最大值', default: 100 },
+      },
+    },
+  },
+  {
+    name: 'get_my_token',
+    description: '获取当前请求 Header 中传入的 Authorization Bearer token',
+    inputSchema: { type: 'object', properties: {} },
+  },
+];
+
+// 执行工具逻辑（context 用于传递请求上下文，如 token）
+const executeTool = (
+  name: string,
+  args: Record<string, unknown>,
+  context?: { token?: string }
+): { result: string; data: unknown } => {
+  const now = new Date();
+  switch (name) {
+    case 'get_weather':
+      return {
+        result: 'success',
+        data: {
+          city: args.city,
+          temp: 22,
+          condition: '晴',
+          humidity: 65,
+          timestamp: now.toISOString(),
+        },
+      };
+    case 'get_time':
+      return {
+        result: 'success',
+        data: {
+          iso: now.toISOString(),
+          timestamp: now.getTime(),
+          timezone: 'UTC',
+        },
+      };
+    case 'calculate': {
+      const a = Number(args.a);
+      const b = Number(args.b);
+      const op = String(args.op);
+      let value: number;
+      if (op === 'add') value = a + b;
+      else if (op === 'subtract') value = a - b;
+      else if (op === 'multiply') value = a * b;
+      else if (op === 'divide') value = b === 0 ? NaN : a / b;
+      else value = NaN;
+      return { result: 'success', data: { a, b, op, value } };
+    }
+    case 'echo':
+      return { result: 'success', data: { echoed: args.text } };
+    case 'random_number': {
+      const min = Math.ceil(Number(args.min) || 0);
+      const max = Math.floor(Number(args.max) ?? 100);
+      const value = Math.floor(Math.random() * (max - min + 1)) + min;
+      return { result: 'success', data: { min, max, value } };
+    }
+    case 'get_my_token': {
+      const authHeader = context?.token;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : authHeader ?? null;
+      return {
+        result: 'success',
+        data: {
+          hasToken: !!token,
+          token: token ?? null,
+          prefix: token ? `${token.slice(0, 20)}...` : null,
+        },
+      };
+    }
+    default:
+      return { result: 'error', data: { message: `未知工具: ${name}` } };
+  }
+};
+
+// 示例1：列出工具（你的平台可以 GET 这个）
+app.get('/mcp/tools', authenticateMCP, (_req, res) => {
+  res.json({ tools: MOCK_TOOLS });
 });
 
 // 示例2：调用工具（你的平台 POST 这个）
 app.post('/mcp/tools/call', authenticateMCP, (req, res) => {
-  const { name, arguments: args } = req.body;
+  const { name, arguments: args = {} } = req.body;
   const user = req.user;
   console.log(`用户 ${user?.email ?? user?.sub} 调用工具 ${name}`);
-
-  // ←←← 这里写你的真实工具逻辑
-  // if (name === 'yourTool1') { ... }
-
-  res.json({ result: '工具执行成功', data: {} });
+  const context = { token: req.headers.authorization as string | undefined };
+  const { result, data } = executeTool(name, args, context);
+  res.json({ result, data });
 });
 
 // ====================== 标准 MCP 协议端点（Streamable HTTP，供 Cursor/Claude 等客户端连接） ======================
-const createMcpHandler = () => {
+const createMcpHandler = (req: express.Request) => {
+  const authHeader = req.headers.authorization as string | undefined;
   const server = new McpServer(
     { name: 'mymcp', version: '1.0.0' },
     { capabilities: { tools: {} } }
   );
+
   server.registerTool(
-    'yourTool1',
-    { description: '示例工具', inputSchema: z.object({}) },
-    async () => ({
-      content: [{ type: 'text', text: '工具执行成功' }],
-    })
+    'get_weather',
+    {
+      description: '获取指定城市的模拟天气信息',
+      inputSchema: z.object({ city: z.string().describe('城市名称') }),
+    },
+    async ({ city }) => {
+      const { data } = executeTool('get_weather', { city });
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    }
   );
+
+  server.registerTool(
+    'get_time',
+    { description: '获取当前服务器时间', inputSchema: z.object({}) },
+    async () => {
+      const { data } = executeTool('get_time', {});
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'calculate',
+    {
+      description: '简单计算器：支持加减乘除',
+      inputSchema: z.object({
+        a: z.number().describe('第一个数'),
+        b: z.number().describe('第二个数'),
+        op: z.enum(['add', 'subtract', 'multiply', 'divide']).describe('运算类型'),
+      }),
+    },
+    async ({ a, b, op }) => {
+      const { data } = executeTool('calculate', { a, b, op });
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'echo',
+    {
+      description: '回显输入的文本',
+      inputSchema: z.object({ text: z.string().describe('要回显的文本') }),
+    },
+    async ({ text }) => {
+      const { data } = executeTool('echo', { text });
+      return { content: [{ type: 'text', text: String((data as { echoed: string }).echoed) }] };
+    }
+  );
+
+  server.registerTool(
+    'random_number',
+    {
+      description: '生成指定范围内的随机整数',
+      inputSchema: z.object({
+        min: z.number().optional().default(0),
+        max: z.number().optional().default(100),
+      }),
+    },
+    async ({ min, max }) => {
+      const { data } = executeTool('random_number', { min, max });
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'get_my_token',
+    {
+      description: '获取当前请求 Header 中传入的 Authorization Bearer token',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const { data } = executeTool('get_my_token', {}, { token: authHeader });
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
   return server;
 };
 
 app.all('/mcp', authenticateMCP, async (req, res) => {
-  const server = createMcpHandler();
+  const server = createMcpHandler(req);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // 无状态模式，适配 Vercel serverless
   });
