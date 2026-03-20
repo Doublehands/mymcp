@@ -64,7 +64,7 @@ MCP_RESOURCE=https://你的项目.vercel.app
 MOCK_MCP=true   # 模拟阶段可设为 true，正式用 Cognito 时删除或设为 false
 ```
 
-部署后 MCP URL 为：`https://你的项目.vercel.app`（vercel.json 已配置 rewrite，根路径即 API）
+部署后 MCP URL 为：`https://你的项目.vercel.app`（vercel.json 已配置 rewrite，根路径即 API，内部会正确转发到 /api）
 
 ## 其他部署
 

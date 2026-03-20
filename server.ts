@@ -8,6 +8,14 @@ const app = express();
 app.use(cors({ origin: '*' })); // 生产时改成你的平台域名
 app.use(express.json());
 
+// Vercel 部署时请求路径带 /api 前缀，需剥离才能匹配路由
+app.use((req, _res, next) => {
+  if (req.path.startsWith('/api')) {
+    req.url = req.url.replace(/^\/api/, '') || '/';
+  }
+  next();
+});
+
 // ========== 请求日志中间件（记录所有请求的 method、path、headers、body） ==========
 app.use((req, _res, next) => {
   const log: Record<string, unknown> = {
